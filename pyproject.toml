@@ -1,0 +1,29 @@
+[project]
+name = "dexscreener-service"
+version = "0.1.0"
+description = "FastAPI microservice for DexScreener market and chart data"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.116.0,<1.0.0",
+    "httpx>=0.28.0,<1.0.0",
+    "pydantic>=2.11.0,<3.0.0",
+    "pydantic-settings>=2.10.0,<3.0.0",
+    "seleniumbase>=4.44.11",
+    "uvicorn[standard]>=0.35.0,<1.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0,<9.0.0",
+    "pytest-asyncio>=1.1.0,<2.0.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
