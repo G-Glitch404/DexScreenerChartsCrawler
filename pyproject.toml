@@ -1,6 +1,6 @@
 [project]
 name = "dexscreener-service"
-version = "0.1.0"
+version = "1.0"
 description = "FastAPI microservice for DexScreener market and chart data"
 requires-python = ">=3.12,<3.13"
 dependencies = [
