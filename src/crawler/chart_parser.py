@@ -3,7 +3,7 @@ import datetime as dt
 
 from typing import Generator
 
-from src.items.charts import Candle
+from src.items.candle import Candle
 
 
 def _read_string(data, offset: int) -> tuple[str, int]:

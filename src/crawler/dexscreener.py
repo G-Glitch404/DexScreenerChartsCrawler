@@ -3,7 +3,7 @@ import httpx
 import asyncio
 
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from typing import AsyncGenerator, Any, Optional
 
 from seleniumbase import Driver
@@ -11,8 +11,9 @@ from selenium.common.exceptions import InvalidSessionIdException, NoSuchWindowEx
 from urllib3.exceptions import ReadTimeoutError
 
 from src.core.logger import Logger
-from src.crawler._chart_parser import parse_dexscreener_bars
-from src.items.charts import Pair, Candle
+from src.crawler.chart_parser import parse_dexscreener_bars
+from src.items.candle import Candle
+from src.items.pair import Pair
 from src.util.utils import ROUTES
 
 
@@ -58,36 +59,43 @@ class DexscreenerCrawler:
 
     @staticmethod
     def _generate_chart_url(
-        trade: Pair,
+        pair: Pair,
         resolution: int = 5,
         cb: int = 329,
         cs: Optional[str] = None,
         ats: Optional[str] = None,
         abn: Optional[str] = None
     ) -> str:
-        """ Generate a DexScreener chart endpoint from a resolved trade """
-        chain: str = str(trade.chain_id).strip().lower()
-        dex: str = str(trade.dex_id).strip().lower()
-        pair: str = str(trade.pair_address).strip()
-        quote: str = str(trade.quote_token_address).strip()
+        """ Generate a DexScreener chart endpoint from a resolved pair """
+        chain: str = str(pair.chain_id).strip().lower()
+        dex: str = str(pair.dex_id).strip().lower()
+        pair_address: str = str(pair.pair_address).strip()
 
         route: str = ROUTES.get((chain, dex))
         if not route:
             raise ValueError(f"unsupported chart route: {chain}/{dex}")
 
-        params: dict[str, Any] = {
-            "mc": "1",
-            "res": str(trade.charts_resolution or resolution),
-            "cb": str(trade.candles_amount or cb),
-            "q": quote,
-            "uo": "0",
+        encoded_route = quote(route, safe="")
+        encoded_chain = quote(chain, safe="")
+        encoded_pair_address = quote(pair_address, safe="")
+
+        params = {
+            "mc": 1,
+            "res": pair.charts_resolution,
+            "cb": pair.candles_amount,
+            "q": pair.quote_token_address,
+            "uo": 0,
         }
 
         if cs is not None: params["cs"] = str(cs)
         if ats is not None: params["ats"] = str(ats)
         if abn is not None: params["abn"] = str(abn)
 
-        return f"https://io.dexscreener.com/dex/chart/amm/v3/{route}/bars/{chain}/{pair}?{urlencode(params)}"
+        return (
+            f"https://io.dexscreener.com/dex/chart/amm/v3/"
+            f"{encoded_route}/bars/{encoded_chain}/"
+            f"{encoded_pair_address}?{urlencode(params)}"
+        )
 
     def clean_processes(self) -> None:
         for process in psutil.process_iter():
@@ -126,9 +134,9 @@ class DexscreenerCrawler:
 
         return response.content
 
-    async def crawl_charts(self, trade: Pair) -> AsyncGenerator[Candle, None]:
-        """ Request the trade chart and parse its binary response """
-        url: str = self._generate_chart_url(trade)
+    async def crawl_charts(self, pair: Pair) -> AsyncGenerator[Candle, None]:
+        """ Request the pair chart and parse its binary response """
+        url: str = self._generate_chart_url(pair)
         response: bytes = await self._request(url)
         for candle in parse_dexscreener_bars(response):
             yield candle
