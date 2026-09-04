@@ -2,19 +2,20 @@
 name = "dexscreener-service"
 version = "0.1.0"
 description = "FastAPI microservice for DexScreener market and chart data"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
-    "fastapi>=0.116.0,<1.0.0",
-    "httpx>=0.28.0,<1.0.0",
+    "fastapi>=0.141.0,<1.0.0",
+    "httpx>=0.28.1,<1.0.0",
+    "psutil>=7.2.2,<8.0.0",
     "pydantic>=2.11.0,<3.0.0",
-    "pydantic-settings>=2.10.0,<3.0.0",
-    "seleniumbase>=4.44.11",
+    "pydantic-settings>=2.15.0,<3.0.0",
+    "seleniumbase>=4.53.0,<5.0.0",
     "uvicorn[standard]>=0.35.0,<1.0.0",
 ]
 
 [dependency-groups]
 dev = [
-    "pytest>=8.4.0,<9.0.0",
+    "pytest>=8.4.0,<10.0.0",
     "pytest-asyncio>=1.1.0,<2.0.0",
 ]
 
