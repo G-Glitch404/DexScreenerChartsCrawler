@@ -4,7 +4,7 @@ import asyncio
 
 from pathlib import Path
 from urllib.parse import quote, urlencode
-from typing import AsyncGenerator, Any, Optional
+from typing import AsyncGenerator, Optional, Any
 
 from seleniumbase import Driver
 from selenium.common.exceptions import InvalidSessionIdException, NoSuchWindowException
@@ -18,7 +18,6 @@ from src.util.utils import ROUTES
 
 
 class DexscreenerCrawler:
-    dexscreener_endpoint = "https://io.dexscreener.com/dex/chart/amm/v3/"
     _logger = Logger('DexscreenerCrawler')
     client = httpx.AsyncClient()
 
@@ -50,7 +49,6 @@ class DexscreenerCrawler:
                 disable_gpu=True,
                 no_sandbox=True,
                 page_load_strategy="eager",
-                user_data_dir=Path("/tmp", "CrawlerProfile"),
                 chromium_arg="--disable-dev-shm-usage, --disable-gpu, --no-sandbox",
             )
             self._logger.info("crawler cleaned browser process and restarted seleniumbase uc driver")
@@ -60,8 +58,6 @@ class DexscreenerCrawler:
     @staticmethod
     def _generate_chart_url(
         pair: Pair,
-        resolution: int = 5,
-        cb: int = 329,
         cs: Optional[str] = None,
         ats: Optional[str] = None,
         abn: Optional[str] = None
@@ -79,7 +75,7 @@ class DexscreenerCrawler:
         encoded_chain = quote(chain, safe="")
         encoded_pair_address = quote(pair_address, safe="")
 
-        params = {
+        params: dict[str, Any] = {
             "mc": 1,
             "res": pair.charts_resolution,
             "cb": pair.candles_amount,
@@ -140,3 +136,27 @@ class DexscreenerCrawler:
         response: bytes = await self._request(url)
         for candle in parse_dexscreener_bars(response):
             yield candle
+
+
+async def run():
+    """ test run the crawler """
+    crawler = DexscreenerCrawler()
+
+    test_pair = Pair(
+        chain_id="robinhood",
+        dex_id="uniswap",
+        pair_address="0x4be9657ec9002e528f4f17a5c43edc525a07f888f7b180c2afbf75e096c4f38a",
+        quote_token_address="0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+        candles_amount=100,
+        charts_resolution=5,
+    )
+
+    candles_counter: int = 0
+    async for candle in crawler.crawl_charts(pair=test_pair):
+        candles_counter += 1
+        print(candle)
+    print(candles_counter)
+
+
+if __name__ == '__main__':
+    asyncio.run(run())

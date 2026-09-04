@@ -78,8 +78,8 @@ async def _crawl_request(req: ChartRequest) -> AsyncGenerator[Candle, None]:
             driver = getattr(crawler, "_driver", None)
             if driver is not None:
                 try: driver.quit()
-                except Exception:
-                    crawler.clean_processes()
+                except Exception: pass
+            crawler.clean_processes()
 
 
 async def _collect(generator: AsyncGenerator[Candle, None]) -> list[Candle]:
