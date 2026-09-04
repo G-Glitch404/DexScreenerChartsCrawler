@@ -4,7 +4,7 @@ import asyncio
 
 from pathlib import Path
 from urllib.parse import urlencode
-from typing import AsyncGenerator, Any
+from typing import AsyncGenerator, Any, Optional
 
 from seleniumbase import Driver
 from selenium.common.exceptions import InvalidSessionIdException, NoSuchWindowException
@@ -61,9 +61,9 @@ class DexscreenerCrawler:
         trade: Pair,
         resolution: int = 5,
         cb: int = 329,
-        cs: str = None,
-        ats: str = None,
-        abn: str = None
+        cs: Optional[str] = None,
+        ats: Optional[str] = None,
+        abn: Optional[str] = None
     ) -> str:
         """ Generate a DexScreener chart endpoint from a resolved trade """
         chain: str = str(trade.chain_id).strip().lower()
@@ -77,8 +77,8 @@ class DexscreenerCrawler:
 
         params: dict[str, Any] = {
             "mc": "1",
-            "res": str(resolution),
-            "cb": str(cb),
+            "res": str(trade.charts_resolution or resolution),
+            "cb": str(trade.candles_amount or cb),
             "q": quote,
             "uo": "0",
         }

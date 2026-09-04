@@ -22,3 +22,5 @@ class Pair(BaseModel):
     dex_id: str
     pair_address: str
     quote_token_address: str
+    candles_amount: int = 329
+    charts_resolution: int = 5
