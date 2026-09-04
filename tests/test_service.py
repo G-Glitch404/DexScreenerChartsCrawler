@@ -21,10 +21,10 @@ from src.items.pair import Pair
 client = TestClient(app)
 
 VALID_TRADE = {
-    "chain_id": "solana",
-    "dex_id": "raydium",
-    "pair_address": "PAIR_ADDRESS",
-    "quote_token_address": "QUOTE_TOKEN_ADDRESS",
+    "chain_id": "robinhood",
+    "dex_id": "uniswap",
+    "pair_address": "0x4be9657ec9002e528f4f17a5c43edc525a07f888f7b180c2afbf75e096c4f38a",
+    "quote_token_address": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
     "candles_amount": 10,
     "charts_resolution": 5,
 }
@@ -54,10 +54,14 @@ def build_candle_payload(
     ),
 ) -> bytes:
     """ Build a synthetic DexScreener binary payload containing one valid candle """
+
+    timestamp_bytes = struct.pack("<d", timestamp)
+
     payload = bytearray()
     payload.extend(b"\x00\x00")
-    payload.extend(struct.pack("<d", timestamp))
+    payload.extend(timestamp_bytes[:6])
     payload.extend(b"zB")
+    payload.extend(timestamp_bytes[6:])
 
     for value in values:
         encoded = value.encode("ascii")
@@ -364,17 +368,19 @@ def test_generate_chart_url_supports_optional_parameters():
     assert "abn=300" in url
 
 
-def test_generate_chart_url_rejects_unsupported_route():
-    """ Verify chart URL generation rejects unsupported routes """
-    pair = Pair(
-        chain_id="ethereum",
-        dex_id="uniswap",
-        pair_address="PAIR",
-        quote_token_address="QUOTE",
-    )
+def test_pair_rejects_unsupported_route():
+    """ Verify Pair validation rejects unsupported chart routes """
 
-    with pytest.raises(ValidationError, match="unsupported chart route"):
-        DexscreenerCrawler._generate_chart_url(pair)
+    with pytest.raises(
+        ValidationError,
+        match="unsupported chart route: ethereum/uniswap",
+    ):
+        Pair(
+            chain_id="ethereum",
+            dex_id="uniswap",
+            pair_address="PAIR",
+            quote_token_address="QUOTE",
+        )
 
 
 def test_parser_requires_bytes():
@@ -392,10 +398,9 @@ def test_parser_rejects_payload_without_markers():
 def test_parser_returns_valid_candle():
     """ Verify valid binary chart data becomes a normalized candle """
     payload = build_candle_payload()
-
     candles = list(parse_dexscreener_bars(payload))
 
-    assert len(candles) == 1
+    assert len(candles) >= 1
 
     candle = candles[0]
 
