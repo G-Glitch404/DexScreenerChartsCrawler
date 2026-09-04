@@ -3,7 +3,7 @@ services:
     image: localhost/dexscreener-crawler:latest
     container_name: dexscreener-crawler-app
     restart: unless-stopped
-    env_file: ./.env.prod
+    env_file: ./.env/.env.prod
     environment:
       - PORT=${PORT}
       - HOST=${HOST}
