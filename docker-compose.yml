@@ -5,12 +5,18 @@ services:
     restart: unless-stopped
     env_file: ./.env.prod
     environment:
-      - PORT=9098
+      - PORT=${PORT}
+      - HOST=${HOST}
+      - MAX_CONCURRENT_CRAWLS=${MAX_CONCURRENT_CRAWLS}
+      - DEFAULT_TIMEOUT_SECONDS=${DEFAULT_TIMEOUT_SECONDS}
+      - MAX_TIMEOUT_SECONDS=${MAX_TIMEOUT_SECONDS}
+      - WEBSOCKET_RECEIVE_TIMEOUT_SECONDS=${WEBSOCKET_RECEIVE_TIMEOUT_SECONDS}
+      - WEBSOCKET_IDLE_TIMEOUT_SECONDS=${WEBSOCKET_IDLE_TIMEOUT_SECONDS}
     build:
       context: .
       dockerfile: ./Dockerfile
     ports:
-      - "9098:9098"
+      - "${PORT}:${PORT}"
     networks:
       - crawlers-network
     dns:
@@ -19,7 +25,7 @@ services:
     volumes:
       - dexscreener_logs:/app/logs:Z
     healthcheck:
-      test: ["CMD-SHELL", "/bin/sh -c 'ss -ltn | grep -q :9098'"]
+      test: ["CMD-SHELL", "/bin/sh -c 'ss -ltn | grep -q :${PORT}'"]
       interval: 10s
       timeout: 5s
       retries: 6
