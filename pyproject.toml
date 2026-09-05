@@ -4,12 +4,10 @@ version = "1.0"
 description = "FastAPI microservice for DexScreener market and chart data"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "cloudscraper==1.2.71",
     "fastapi>=0.141.0,<1.0.0",
-    "httpx>=0.28.1,<1.0.0",
-    "psutil>=7.2.2,<8.0.0",
     "pydantic>=2.11.0,<3.0.0",
     "pydantic-settings>=2.15.0,<3.0.0",
-    "seleniumbase>=4.53.0,<5.0.0",
     "uvicorn[standard]>=0.35.0,<1.0.0",
 ]
 
