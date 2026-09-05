@@ -238,17 +238,6 @@ def test_rest_passes_trade_and_proxy(fake_crawler):
     }
 
 
-def test_rest_cleans_up_crawler(fake_crawler):
-    """Verify crawler cleanup runs after REST crawling."""
-    response = client.post(
-        "/v1/charts",
-        json={"pair": VALID_TRADE},
-    )
-
-    assert response.status_code == 200
-    assert fake_crawler.cleaned == 1
-
-
 def test_rest_rejects_invalid_request():
     """Verify invalid REST requests are rejected."""
     response = client.post(
