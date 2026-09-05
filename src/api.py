@@ -57,29 +57,21 @@ async def _crawl_request(req: ChartRequest) -> AsyncGenerator[Candle, None]:
         generator: AsyncGenerator = crawler.crawl_charts(req.pair)
         deadline: float = time.monotonic() + timeout_seconds
 
-        try:
-            while True:
-                remaining: float = deadline - time.monotonic()
+        while True:
+            remaining: float = deadline - time.monotonic()
 
-                if remaining <= 0:
-                    raise TimeoutError("chart crawl operation timed out")
+            if remaining <= 0:
+                raise TimeoutError("chart crawl operation timed out")
 
-                try:
-                    candle: Candle = await asyncio.wait_for(
-                        generator.__anext__(),
-                        timeout=remaining,
-                    )
-                except StopAsyncIteration:
-                    break
+            try:
+                candle: Candle = await asyncio.wait_for(
+                    generator.__anext__(),
+                    timeout=remaining,
+                )
+            except StopAsyncIteration:
+                break
 
-                yield candle
-
-        finally:
-            driver = getattr(crawler, "_driver", None)
-            if driver is not None:
-                try: driver.quit()
-                except Exception: pass
-            crawler.clean_processes()
+            yield candle
 
 
 async def _collect(generator: AsyncGenerator[Candle, None]) -> list[Candle]:
