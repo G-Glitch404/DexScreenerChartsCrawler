@@ -1,5 +1,3 @@
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict
 
 
@@ -25,7 +23,6 @@ class Candle(BaseModel):
     Returns:
         Candle: Normalized OHLCV candle model
     """
-
     model_config = ConfigDict(extra="forbid")
 
     timestamp: int
