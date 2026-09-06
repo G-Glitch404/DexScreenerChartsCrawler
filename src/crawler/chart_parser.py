@@ -1,3 +1,4 @@
+import math
 import struct
 import datetime as dt
 
@@ -135,14 +136,25 @@ def parse_dexscreener_bars(data: bytes) -> Generator[Candle, None, None]:
             volume_usd,
         ) = values
 
-        if high_value < max(open_value, close_value): continue
-        if low_value > min(open_value, close_value): continue
-        if high_usd < max(open_usd, close_usd): continue
-        if low_usd > min(open_usd, close_usd): continue
+        if not all(math.isfinite(v) for v in values): continue
+        if volume_usd < 0: continue
+
+        ohlc_valid: bool = (
+                high_value >= max(open_value, close_value)
+                and low_value <= min(open_value, close_value)
+                and high_usd >= max(open_usd, close_usd)
+                and low_usd <= min(open_usd, close_usd)
+        )
+
+        if close_value > open_value: direction = "bullish"
+        elif close_value < open_value: direction = "bearish"
+        else: direction = "doji"
 
         yield Candle(
             timestamp=timestamp,
             datetime=timestamp_dt.isoformat(),
+            ohlc_valid=ohlc_valid,
+            direction=direction,
             open=open_value,
             open_usd=open_usd,
             high=high_value,

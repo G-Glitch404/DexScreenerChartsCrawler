@@ -24,7 +24,7 @@ class Pair(BaseModel):
     dex_id: str = Field(min_length=1, max_length=64)
     pair_address: str = Field(min_length=1, max_length=256)
     quote_token_address: str = Field(min_length=1, max_length=256)
-    candles_amount: int = Field(default=329, ge=1, le=10_000)
+    candles_amount: int = Field(default=329, ge=1, le=1000)
     charts_resolution: int = Field(default=5, ge=1, le=1440)
 
     @field_validator("chain_id", "dex_id", "pair_address", "quote_token_address")

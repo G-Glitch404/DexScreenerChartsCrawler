@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -8,9 +10,11 @@ class Candle(BaseModel):
     Args:
         timestamp (int): Candle timestamp in milliseconds
         datetime (str): Candle timestamp as an ISO 8601 UTC string
+        ohlc_valid (bool): True if candle is sematically valid else False
+        direction (str): the direction of a candle (bullish, bearish, or doji)
         open (float): Opening token price
         open_usd (float): Opening token price in USD
-        high (float): Highest token price
+        high (float): Highest token prices
         high_usd (float): Highest token price in USD
         low (float): Lowest token price
         low_usd (float): Lowest token price in USD
@@ -26,6 +30,8 @@ class Candle(BaseModel):
 
     timestamp: int
     datetime: str
+    ohlc_valid: bool
+    direction: str
     open: float
     open_usd: float
     high: float

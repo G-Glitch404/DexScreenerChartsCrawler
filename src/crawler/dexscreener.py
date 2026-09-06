@@ -145,16 +145,13 @@ if __name__ == "__main__":
             charts_resolution=5,
         )
 
-        try:
-            candles_counter: int = 0
+        candles_counter: int = 0
 
-            async for candle in crawler.crawl_charts(pair=test_pair):
-                candles_counter += 1
-                print(candle)
+        async for candle in crawler.crawl_charts(pair=test_pair):
+            candles_counter += 1
+            print(candle)
 
-            print(candles_counter)
-        finally:
-            crawler.close()
+        print(candles_counter)
 
 
     asyncio.run(run())
