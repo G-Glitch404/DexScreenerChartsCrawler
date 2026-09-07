@@ -4,7 +4,7 @@ import datetime as dt
 
 from typing import Generator
 
-from src.items.candle import Candle
+from src.items.candle import DexscreenerCandle
 
 
 def _read_string(data, offset: int) -> tuple[str, int]:
@@ -59,7 +59,7 @@ def _read_string(data, offset: int) -> tuple[str, int]:
     return value.decode("ascii"), end
 
 
-def parse_dexscreener_bars(data: bytes) -> Generator[Candle, None, None]:
+def parse_dexscreener_bars(data: bytes) -> Generator[DexscreenerCandle, None, None]:
     """
     Parse DexScreener binary chart candles into normalized candle dictionaries
 
@@ -73,8 +73,8 @@ def parse_dexscreener_bars(data: bytes) -> Generator[Candle, None, None]:
 
     Returns:
         list[dict[str, Any]]: A list of parsed candle dictionaries containing:
-            timestamp (int): Candle timestamp in milliseconds
-            dt (str): Candle timestamp converted to an ISO 8601 UTC datetime string
+            timestamp (int): DexscreenerCandle timestamp in milliseconds
+            dt (str): DexscreenerCandle timestamp converted to an ISO 8601 UTC datetime string
             open (float): Opening price
             openUsd (float): Opening price in USD
             high (float): Highest price
@@ -83,7 +83,7 @@ def parse_dexscreener_bars(data: bytes) -> Generator[Candle, None, None]:
             lowUsd (float): Lowest price in USD
             close (float): Closing price
             closeUsd (float): Closing price in USD
-            volumeUsd (float): Candle trading volume in USD
+            volumeUsd (float): DexscreenerCandle trading volume in USD
     Raises:
         TypeError: If data is not a bytes object
         ValueError: If no DexScreener candle timestamp markers are found in the payload
@@ -150,7 +150,7 @@ def parse_dexscreener_bars(data: bytes) -> Generator[Candle, None, None]:
         elif close_value < open_value: direction = "bearish"
         else: direction = "doji"
 
-        yield Candle(
+        yield DexscreenerCandle(
             timestamp=timestamp,
             datetime=timestamp_dt.isoformat(),
             ohlc_valid=ohlc_valid,
