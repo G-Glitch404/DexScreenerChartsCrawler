@@ -1,7 +1,7 @@
 from pydantic import BaseModel, ConfigDict
 
 
-class Candle(BaseModel):
+class DexscreenerCandle(BaseModel):
     """
     Represent a normalized DexScreener OHLCV candle
 
@@ -21,7 +21,7 @@ class Candle(BaseModel):
         volume_usd (float): Candle trading volume in USD
 
     Returns:
-        Candle: Normalized OHLCV candle model
+        DexscreenerCandle: Normalized OHLCV candle model
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -37,4 +37,19 @@ class Candle(BaseModel):
     low_usd: float
     close: float
     close_usd: float
+    volume_usd: float
+
+
+class BirdeyeCandle(BaseModel):
+    """ Represent a Birdeye pair OHLCV candle """
+    model_config = ConfigDict(extra="forbid")
+
+    timestamp: int
+    datetime: str
+    ohlc_valid: bool
+    direction: str
+    open: float
+    high: float
+    low: float
+    close: float
     volume_usd: float

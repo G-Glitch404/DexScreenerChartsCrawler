@@ -1,8 +1,8 @@
-from typing import Optional
+from typing import Optional, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.items.candle import Candle
+from src.items.candle import DexscreenerCandle
 from src.items.pair import Pair
 
 
@@ -11,6 +11,7 @@ class ChartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     pair: Pair
+    crawler: Literal["dexscreener", "birdeye"]
     timeout_seconds: Optional[int] = Field(default=None, ge=10, le=600)
     proxy: Optional[dict[str, str]] = None
 
@@ -20,6 +21,7 @@ class ChartResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     pair: Pair
+    crawler: Literal["dexscreener", "birdeye"]
     count: int = Field(ge=0)
     elapsed_ms: int = Field(ge=0)
-    charts: list[Candle] = Field(default_factory=list)
+    charts: list[DexscreenerCandle] = Field(default_factory=list)
