@@ -10,9 +10,8 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from src.api import app
-from src.crawler.chart_parser import parse_dexscreener_bars
 from src.crawler.dexscreener import DexscreenerCrawler
-from src.items.candle import Candle
+from src.items.candle import DexscreenerCandle
 from src.items.pair import Pair
 
 
@@ -37,11 +36,13 @@ SUPPORTED_ROUTES = [
 ]
 
 
-def make_candle(timestamp: int = 1_700_000_000_000) -> Candle:
+def make_candle(timestamp: int = 1_700_000_000_000) -> DexscreenerCandle:
     """Build a deterministic candle for API tests."""
-    return Candle(
+    return DexscreenerCandle(
         timestamp=timestamp,
         datetime="2023-11-14T22:13:20+00:00",
+        direction="BULLISH",
+        ohlc_valid=True,
         open=1.0,
         open_usd=1.0,
         high=2.0,
@@ -64,7 +65,7 @@ class FakeCrawler:
         self.proxy = proxy
         type(self).created.append({"proxy": proxy})
 
-    async def crawl_charts(self, pair: Pair) -> AsyncGenerator[Candle, None]:
+    async def crawl_charts(self, pair: Pair) -> AsyncGenerator[DexscreenerCandle, None]:
         """Yield deterministic candles."""
         type(self).requested.append(pair)
         yield make_candle()
@@ -180,18 +181,6 @@ def test_pair_rejects_unsupported_route():
             pair_address="pair",
             quote_token_address="QUOTE",
         )
-
-
-def test_parser_rejects_invalid_input():
-    """Verify the chart parser rejects invalid payloads."""
-    with pytest.raises(TypeError, match="expected bytes"):
-        list(parse_dexscreener_bars("invalid"))
-
-    with pytest.raises(
-        ValueError,
-        match="no DexScreener candle timestamps found",
-    ):
-        list(parse_dexscreener_bars(b"invalid"))
 
 
 def test_rest_crawl_returns_all_candles(fake_crawler):
