@@ -1,14 +1,16 @@
-import asyncio
 import os
+import asyncio
 import time
-from typing import Any, AsyncGenerator, Optional
-
 import uvicorn
+
+from typing import Any, AsyncGenerator, Union
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 
 from src.crawler.dexscreener import DexscreenerCrawler
-from src.items import Candle, ChartRequest, ChartResponse
+from src.crawler.birdeye import BirdeyeCrawler
+from src.items import DexscreenerCandle, BirdeyeCandle, ChartRequest, ChartResponse
 
+Candle = Union[DexscreenerCandle, BirdeyeCandle]
 
 HOST: str = os.getenv("HOST", "0.0.0.0")
 PORT: int = int(os.getenv("PORT", "9098"))
@@ -29,33 +31,16 @@ app = FastAPI(
 )
 
 
-def _normalize_timeout(timeout_seconds: Optional[int]) -> int:
-    """ Normalize and validate a chart crawl timeout """
-    timeout: int = timeout_seconds or DEFAULT_TIMEOUT_SECONDS
-
-    if timeout < 1:
-        raise HTTPException(
-            status_code=422,
-            detail="timeout_seconds must be greater than zero",
-        )
-
-    if timeout > MAX_TIMEOUT_SECONDS:
-        raise HTTPException(
-            status_code=422,
-            detail=f"timeout_seconds cannot exceed {MAX_TIMEOUT_SECONDS}",
-        )
-
-    return timeout
-
-
-async def _crawl_request(req: ChartRequest) -> AsyncGenerator[Candle, None]:
+async def _crawl_request(req: ChartRequest) -> AsyncGenerator[DexscreenerCandle, None]:
     """ Crawl a pair chart with the configured concurrency and timeout limits """
-    timeout_seconds: int = _normalize_timeout(req.timeout_seconds)
-
     async with crawl_gate:
-        crawler = DexscreenerCrawler(proxy=req.proxy)
+        if req.crawler == 'birdeye':
+            crawler = BirdeyeCrawler(proxy=req.proxy)
+        elif req.crawler == 'dexscreener':
+            crawler = DexscreenerCrawler(proxy=req.proxy)
+
         generator: AsyncGenerator = crawler.crawl_charts(req.pair)
-        deadline: float = time.monotonic() + timeout_seconds
+        deadline: float = time.monotonic() + req.timeout_seconds
 
         while True:
             remaining: float = deadline - time.monotonic()
@@ -64,7 +49,7 @@ async def _crawl_request(req: ChartRequest) -> AsyncGenerator[Candle, None]:
                 raise TimeoutError("chart crawl operation timed out")
 
             try:
-                candle: Candle = await asyncio.wait_for(
+                candle: DexscreenerCandle = await asyncio.wait_for(
                     generator.__anext__(),
                     timeout=remaining,
                 )
@@ -168,6 +153,7 @@ async def charts(req: ChartRequest) -> ChartResponse:
 
     return ChartResponse(
         pair=req.pair,
+        crawler=req.crawler,
         count=len(candles),
         elapsed_ms=elapsed_ms,
         charts=candles,
@@ -186,17 +172,10 @@ async def websocket_charts(websocket: WebSocket) -> None:
         )
 
         req = ChartRequest.model_validate(payload)
-        timeout_seconds: int = _normalize_timeout(req.timeout_seconds)
 
         await asyncio.wait_for(
-            _stream(
-                websocket,
-                _crawl_request(req),
-            ),
-            timeout=min(
-                timeout_seconds,
-                WEBSOCKET_IDLE_TIMEOUT_SECONDS,
-            ),
+            _stream(websocket, _crawl_request(req)),
+            timeout=min(req.timeout_seconds, WEBSOCKET_IDLE_TIMEOUT_SECONDS),
         )
 
     except asyncio.TimeoutError:
@@ -225,7 +204,7 @@ async def websocket_charts(websocket: WebSocket) -> None:
 
     finally:
         try: await websocket.close()
-        except Exception: pass
+        except RuntimeError: pass
 
 
 if __name__ == "__main__":

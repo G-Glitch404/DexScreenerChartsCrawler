@@ -5,8 +5,8 @@ import cloudscraper
 from typing import Any, AsyncGenerator, Optional
 from urllib.parse import quote, urlencode
 
-from src.crawler.chart_parser import parse_dexscreener_bars
-from src.items.candle import Candle
+from src.crawler._dexscreener_charts_parser import parse_dexscreener_bars
+from src.items.candle import DexscreenerCandle
 from src.items.pair import Pair
 from src.util.utils import ROUTES
 
@@ -114,7 +114,7 @@ class DexscreenerCrawler:
 
         return response.content
 
-    async def crawl_charts(self, pair: Pair) -> AsyncGenerator[Candle, None]:
+    async def crawl_charts(self, pair: Pair) -> AsyncGenerator[DexscreenerCandle, None]:
         """
         Request a pair chart and parse its binary candle response
 
