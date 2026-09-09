@@ -1,7 +1,7 @@
 services:
   app:
-    image: localhost/dexscreener-crawler:latest
-    container_name: dexscreener-crawler-app
+    image: localhost/charts-crawler:latest
+    container_name: charts-crawler-app
     restart: unless-stopped
     env_file: ./.env/.env.prod
     environment:
@@ -22,8 +22,6 @@ services:
     dns:
       - 8.8.8.8
       - 8.8.4.4
-    volumes:
-      - dexscreener_logs:/app/logs:Z
     healthcheck:
       test: ["CMD-SHELL", "/bin/sh -c 'ss -ltn | grep -q :${PORT}'"]
       interval: 10s
@@ -33,6 +31,3 @@ services:
 networks:
   crawlers-network:
     external: true
-
-volumes:
-  dexscreener_logs:
