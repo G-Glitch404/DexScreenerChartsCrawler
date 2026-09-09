@@ -1,211 +1,298 @@
-# DexScreener Charts Crawler
+# Memecoins Charts Crawler
 
-A FastAPI microservice for retrieving normalized OHLCV chart data from DexScreener's chart infrastructure.
+A FastAPI microservice for retrieving normalized OHLCV market data for memecoins from multiple chart-data providers.
 
-The service is designed for applications that need historical token price candles without embedding DexScreener's binary chart parsing logic into the consuming application. It exposes a small HTTP/WebSocket API, validates chart requests with Pydantic, limits concurrent crawl operations, supports optional proxies, and converts DexScreener's binary chart response into a stable JSON candle format.
+The service provides a stable HTTP interface in front of provider-specific chart implementations, currently supporting **DexScreener** and **Birdeye** crawlers. Provider responses are converted into typed Pydantic candle models so downstream systems can consume chart data without depending on provider-specific response formats.
 
-## What this service does
+The project is designed as an independent microservice for trading systems, risk engines, pattern-recognition systems, backtesting pipelines, market scanners, data collectors, and other services that need normalized historical candle data.
 
-At a high level, a request follows this path:
+## Overview
 
-```text
-Client
-  |
-  | HTTP POST /v1/charts
-  | or WebSocket /v1/ws/charts
-  v
-FastAPI API
-  |
-  | validate ChartRequest
-  | enforce timeout + concurrency limits
-  v
-DexScreener crawler
-  |
-  | build DexScreener chart URL
-  | request binary chart payload
-  v
-DexScreener chart endpoint
-  |
-  | binary response
-  v
-Binary chart parser
-  |
-  | decode timestamps + OHLCV values
-  | validate OHLC relationships
-  v
-Normalized Candle objects
-  |
-  +--> JSON response
-  +--> WebSocket item stream
-```
-
-The public service API is intentionally small:
-
-| Method | Endpoint        | Purpose                                               |
-|--------|-----------------|-------------------------------------------------------|
-| `GET`  | `/health`       | Liveness check                                        |
-| `GET`  | `/ready`        | Readiness/configuration check                         |
-| `POST` | `/v1/charts`    | Crawl all parsed candles and return one JSON document |
-| `WS`   | `/v1/ws/charts` | Crawl and stream candles incrementally                |
-
-The service currently supports the chart routes configured in `src/util/utils.py`:
-
-| Chain       | DexScreener DEX ID | Internal chart route |
-|-------------|--------------------|----------------------|
-| `solana`    | `pumpswap`         | `pumpfundex`         |
-| `solana`    | `pumpfun`          | `pumpfundex`         |
-| `solana`    | `raydium`          | `solamm`             |
-| `solana`    | `meteora`          | `meteora`            |
-| `base`      | `uniswap`          | `uniswapv4`          |
-| `robinhood` | `uniswap`          | `uniswapv4`          |
-
-An unsupported `chain_id` + `dex_id` combination is rejected with validation error `422`.
-
----
-
-## Features
-
-- FastAPI HTTP API with automatically generated OpenAPI documentation.
-- WebSocket endpoint for incremental candle delivery.
-- Normalized OHLCV candle schema.
-- Configurable candle count and resolution.
-- Configurable per-request timeout with service-wide maximum.
-- Global concurrency gate to avoid unlimited simultaneous crawls.
-- Optional HTTP/HTTPS proxy support per request.
-- Binary DexScreener chart response parsing.
-- OHLC consistency checks during parsing.
-- Docker-ready deployment.
-- `uv`-based Python dependency management.
-- Pytest + pytest-asyncio development setup.
-
----
-
-## Requirements
-
-### Local development
-
-- Python `3.12.x`
-- `uv`
-- Network access to DexScreener
-
-The project declares Python `>=3.12,<3.13` and uses the following main dependencies:
-
-- `fastapi`
-- `uvicorn`
-- `pydantic`
-- `pydantic-settings`
-- `cloudscraper`
-
-Development dependencies include `pytest`, `pytest-asyncio`, and `httpx2`.
-
-### Docker
-
-The supplied Dockerfile is based on `python:3.12-slim-bookworm` and installs Chromium/Chromedriver plus the runtime dependencies required by the image.
-
----
-
-## Running locally
-
-Clone the repository and install the locked environment:
-
-```bash
-git clone https://github.com/G-Glitch404/DexScreenerChartsCrawler.git
-cd DexScreenerChartsCrawler
-uv sync --locked
-```
-
-Start the API:
-
-```bash
-uv run uvicorn src.api:app --host 0.0.0.0 --port 9098
-```
-
-The service listens on:
+The crawler sits between an application that needs chart data and the external market-data provider that supplies it.
 
 ```text
-http://127.0.0.1:9098
+Consumer
+   |
+   | HTTP POST /v1/charts
+   v
+FastAPI
+   |
+   | validate request
+   | select crawler
+   | enforce concurrency
+   | enforce timeout
+   v
++--------------------------+
+| Provider Crawler         |
+|                          |
+|  DexScreener             |
+|  or                      |
+|  Birdeye                 |
++--------------------------+
+   |
+   v
+Provider API / chart source
+   |
+   | provider-specific response
+   v
+Normalizer
+   |
+   v
+Typed candle objects
+   |
+   v
+JSON response
 ```
 
-The API documentation is available at:
+The important architectural boundary is the crawler interface.
+
+Consumers do not need to know how DexScreener's chart payload is encoded or how Birdeye represents OHLCV records. They submit a normalized `Pair` request and select the desired provider.
+
+## Why this service exists
+
+Market-data consumers often become tightly coupled to the source that provides their candles.
+
+Without a dedicated service, a downstream application typically ends up containing:
+
+* provider-specific HTTP clients
+* provider-specific authentication
+* provider-specific request construction
+* provider-specific response parsing
+* provider-specific timestamp handling
+* provider-specific OHLC normalization
+* provider-specific error handling
+* provider-specific retry and timeout behavior
+
+That becomes especially problematic when a provider becomes unreliable for a particular chain, DEX, pair, or endpoint.
+
+This project isolates those concerns inside crawler implementations.
+
+The consumer sees a consistent interface:
 
 ```text
-http://127.0.0.1:9098/docs
-http://127.0.0.1:9098/redoc
+Pair
+  ↓
+Crawler
+  ↓
+AsyncGenerator[Candle]
 ```
 
-You can also start it through the package entry point:
+while the provider-specific implementation can evolve independently.
 
-```bash
-uv run python -m src
+## Current providers
+
+### DexScreener
+
+The DexScreener crawler retrieves chart data through DexScreener's chart infrastructure and parses the provider's binary chart payload into normalized `DexscreenerCandle` objects.
+
+The implementation contains provider-specific routing logic because the chart endpoint is not simply a generic `chain + dex + pair` endpoint. The repository maintains an explicit route table for supported combinations.
+
+The currently configured route table includes:
+
+| Chain       | DEX        | Internal route |
+|-------------|------------|----------------|
+| `solana`    | `pumpswap` | `pumpfundex`   |
+| `solana`    | `pumpfun`  | `pumpfundex`   |
+| `solana`    | `raydium`  | `solamm`       |
+| `solana`    | `meteora`  | `meteora`      |
+| `base`      | `uniswap`  | `uniswapv4`    |
+| `robinhood` | `uniswap`  | `uniswapv4`    |
+
+Unsupported combinations are rejected before the provider request is constructed.
+
+### Birdeye
+
+The Birdeye crawler was added to provide an alternative source of OHLCV chart data and to reduce dependence on DexScreener's binary chart infrastructure.
+
+The current implementation uses Birdeye's pair OHLCV endpoint, sends the API key through `X-API-KEY`, supplies the chain through `x-chain`, converts supported resolutions into Birdeye interval names, validates numeric values, and normalizes records into `BirdeyeCandle` objects.
+
+Supported minute resolutions currently map to Birdeye intervals as follows:
+
+| Resolution | Birdeye interval |
+|-----------:|------------------|
+|          1 | `1m`             |
+|          3 | `3m`             |
+|          5 | `5m`             |
+|         15 | `15m`            |
+|         30 | `30m`            |
+|         60 | `1H`             |
+|        120 | `2H`             |
+|        240 | `4H`             |
+|        360 | `6H`             |
+|        480 | `8H`             |
+|        720 | `12H`            |
+|       1440 | `1D`             |
+|       4320 | `3D`             |
+|      10080 | `1W`             |
+|      43200 | `1M`             |
+
+The crawler caps the requested candle count at 5000 before making the provider request.
+
+The Birdeye crawler currently expects a valid Birdeye-compatible pair address. A DexScreener pair address being syntactically valid does not by itself guarantee that Birdeye indexes the same pool.
+
+## Candle models
+
+Provider-specific response differences are represented explicitly.
+
+### `DexscreenerCandle`
+
+The DexScreener candle contains:
+
+| Field        | Type    | Description                                       |
+|--------------|---------|---------------------------------------------------|
+| `timestamp`  | `int`   | Candle timestamp in milliseconds                  |
+| `datetime`   | `str`   | ISO-8601 UTC timestamp                            |
+| `ohlc_valid` | `bool`  | Whether the OHLC relationship is internally valid |
+| `direction`  | `str`   | `bullish`, `bearish`, or `doji`                   |
+| `open`       | `float` | Opening token price                               |
+| `open_usd`   | `float` | Opening price in USD                              |
+| `high`       | `float` | High token price                                  |
+| `high_usd`   | `float` | High price in USD                                 |
+| `low`        | `float` | Low token price                                   |
+| `low_usd`    | `float` | Low price in USD                                  |
+| `close`      | `float` | Closing token price                               |
+| `close_usd`  | `float` | Closing price in USD                              |
+| `volume_usd` | `float` | USD trading volume                                |
+
+### `BirdeyeCandle`
+
+Birdeye uses a separate model because its pair OHLCV endpoint does not provide the exact same normalized structure as the DexScreener implementation.
+
+| Field        | Type    | Description                                       |
+|--------------|---------|---------------------------------------------------|
+| `timestamp`  | `int`   | Candle timestamp in milliseconds                  |
+| `datetime`   | `str`   | ISO-8601 UTC timestamp                            |
+| `ohlc_valid` | `bool`  | Whether the OHLC relationship is internally valid |
+| `direction`  | `str`   | `bullish`, `bearish`, or `doji`                   |
+| `open`       | `float` | Opening price                                     |
+| `high`       | `float` | High price                                        |
+| `low`        | `float` | Low price                                         |
+| `close`      | `float` | Closing price                                     |
+| `volume_usd` | `float` | USD trading volume                                |
+
+Both models deliberately use `extra="forbid"` so unexpected fields do not silently enter the normalized data model.
+
+## Candle semantics
+
+The crawler does more than deserialize provider values.
+
+Each normalized candle contains explicit semantic fields that allow downstream systems to make decisions without repeatedly reimplementing basic candle validation.
+
+### OHLC validity
+
+A candle is considered OHLC-valid when:
+
+```text
+high >= max(open, close)
+low  <= min(open, close)
 ```
 
----
+The DexScreener implementation also checks the USD representation:
 
-## Environment variables
-
-The API reads these environment variables at process startup:
-
-| Variable                            |   Default | Description                                                  |
-|-------------------------------------|----------:|--------------------------------------------------------------|
-| `HOST`                              | `0.0.0.0` | Bind address                                                 |
-| `PORT`                              |    `9098` | API port                                                     |
-| `MAX_CONCURRENT_CRAWLS`             |       `2` | Maximum concurrent chart crawls                              |
-| `DEFAULT_TIMEOUT_SECONDS`           |     `120` | Default crawl timeout when a request omits `timeout_seconds` |
-| `MAX_TIMEOUT_SECONDS`               |     `600` | Maximum allowed crawl timeout                                |
-| `WEBSOCKET_RECEIVE_TIMEOUT_SECONDS` |      `30` | Maximum time to receive the initial WebSocket JSON request   |
-| `WEBSOCKET_IDLE_TIMEOUT_SECONDS`    |     `600` | WebSocket crawl/idle execution ceiling                       |
-
-Example `.env/.env.prod`:
-
-```dotenv
-HOST=0.0.0.0
-PORT=9098
-MAX_CONCURRENT_CRAWLS=2
-DEFAULT_TIMEOUT_SECONDS=120
-MAX_TIMEOUT_SECONDS=600
-WEBSOCKET_RECEIVE_TIMEOUT_SECONDS=30
-WEBSOCKET_IDLE_TIMEOUT_SECONDS=600
+```text
+high_usd >= max(open_usd, close_usd)
+low_usd  <= min(open_usd, close_usd)
 ```
 
-### Timeout behavior
+Malformed numeric values and negative volumes are rejected during parsing, while the semantic validity itself is preserved in `ohlc_valid` rather than silently discarding every structurally unusual candle. This change was introduced specifically to replace the older approach that dropped semantically invalid candles during parsing.
 
-`ChartRequest.timeout_seconds` is optional. The Pydantic request model accepts values from `10` through `600` seconds.
+### Candle direction
 
-If omitted, the service uses `DEFAULT_TIMEOUT_SECONDS`.
+The normalized `direction` field is derived from the opening and closing prices:
 
-The effective timeout can never exceed `MAX_TIMEOUT_SECONDS`.
-
-For the REST endpoint, a crawl timeout becomes:
-
-```http
-504 Gateway Timeout
+```text
+close > open  → bullish
+close < open  → bearish
+close == open → doji
 ```
 
-For the WebSocket endpoint, the service sends an error message with `status_code: 504` before closing the socket.
+This is useful for pattern recognition and downstream analytical systems because they no longer need to derive the basic candle direction independently.
 
----
+## Request model
 
-# API Reference
+The public API uses a Pydantic `ChartRequest` model.
 
-## 1. `GET /health`
+A request contains:
 
-Returns the liveness status of the service.
-
-### Request
-
-```http
-GET /health HTTP/1.1
-Host: localhost:9098
-Accept: application/json
+```json
+{
+  "pair": {
+    "chain_id": "solana",
+    "dex_id": "raydium",
+    "pair_address": "PAIR_ADDRESS",
+    "quote_token_address": "QUOTE_TOKEN_ADDRESS",
+    "candles_amount": 120,
+    "charts_resolution": 5
+  },
+  "crawler": "dexscreener",
+  "timeout_seconds": 120,
+  "proxy": null
+}
 ```
 
-### cURL
+The supported crawler values are:
+
+```text
+dexscreener
+birdeye
+```
+
+The API request schema rejects unexpected fields through Pydantic's `extra="forbid"` configuration.
+
+## Pair model
+
+`Pair` is the central input model shared by both crawler implementations.
+
+It contains the market information necessary for chart retrieval:
+
+```text
+chain_id
+dex_id
+pair_address
+quote_token_address
+candles_amount
+charts_resolution
+```
+
+The model also validates the requested pair against the locally supported routing rules where the provider requires explicit route construction.
+
+A typical pair looks like:
+
+```json
+{
+  "chain_id": "solana",
+  "dex_id": "raydium",
+  "pair_address": "PAIR_ADDRESS",
+  "quote_token_address": "QUOTE_TOKEN_MINT",
+  "candles_amount": 120,
+  "charts_resolution": 5
+}
+```
+
+## API
+
+The service exposes a small FastAPI interface.
+
+| Method | Endpoint        | Purpose                             |
+|--------|-----------------|-------------------------------------|
+| `GET`  | `/health`       | Process liveness                    |
+| `GET`  | `/ready`        | Runtime readiness and capacity      |
+| `POST` | `/v1/charts`    | Retrieve complete candle history    |
+| `WS`   | `/v1/ws/charts` | Stream candle history incrementally |
+
+The current repository still exposes both REST and WebSocket chart interfaces.
+
+### `GET /health`
+
+Returns the basic process health state.
+
+Example:
 
 ```bash
 curl http://localhost:9098/health
 ```
 
-### Response
+Example response:
 
 ```json
 {
@@ -215,33 +302,19 @@ curl http://localhost:9098/health
 }
 ```
 
-### Semantics
+This endpoint does not perform a provider request and should be used as a liveness check rather than a dependency-availability check.
 
-This endpoint does not perform a DexScreener crawl. It only confirms that the FastAPI application is alive and responding.
+### `GET /ready`
 
-Use it for a load balancer liveness probe, process supervision, or basic service monitoring.
+Returns service capacity and timeout configuration.
 
----
-
-## 2. `GET /ready`
-
-Returns the service readiness state plus the current crawl capacity and timeout configuration.
-
-### Request
-
-```http
-GET /ready HTTP/1.1
-Host: localhost:9098
-Accept: application/json
-```
-
-### cURL
+Example:
 
 ```bash
 curl http://localhost:9098/ready
 ```
 
-### Response
+Example response:
 
 ```json
 {
@@ -255,79 +328,13 @@ curl http://localhost:9098/ready
 }
 ```
 
-### Response fields
+`available_slots` represents the currently unused crawler semaphore capacity.
 
-| Field                     | Type    | Meaning                                            |
-|---------------------------|---------|----------------------------------------------------|
-| `status`                  | string  | Always `ready` when the endpoint responds normally |
-| `host`                    | string  | Configured bind host                               |
-| `port`                    | integer | Configured API port                                |
-| `available_slots`         | integer | Current number of free crawl semaphore slots       |
-| `max_concurrent_crawls`   | integer | Configured maximum number of concurrent crawls     |
-| `default_timeout_seconds` | integer | Default request timeout                            |
-| `max_timeout_seconds`     | integer | Maximum allowed request timeout                    |
+### `POST /v1/charts`
 
-`available_slots` is useful for operational monitoring. For example, with `max_concurrent_crawls=2`, a value of `0` means both crawl slots are currently occupied.
+This is the primary REST interface.
 
----
-
-## 3. `POST /v1/charts`
-
-Crawls a DexScreener pair and returns all candles successfully parsed from the chart payload in one JSON response.
-
-This is the simplest endpoint for batch collection, backtesting, data pipelines, and applications that want the entire result before processing it.
-
-### Request body
-
-```json
-{
-  "pair": {
-    "chain_id": "solana",
-    "dex_id": "raydium",
-    "pair_address": "<DEXSCREENER_PAIR_ADDRESS>",
-    "quote_token_address": "<QUOTE_TOKEN_MINT>",
-    "candles_amount": 329,
-    "charts_resolution": 5
-  },
-  "timeout_seconds": 120,
-  "proxy": null
-}
-```
-
-### `pair` fields
-
-| Field                 | Type    |  Default | Constraints | Description                                           |
-|-----------------------|---------|---------:|-------------|-------------------------------------------------------|
-| `chain_id`            | string  | required | 1-64 chars  | DexScreener chain identifier, normalized to lowercase |
-| `dex_id`              | string  | required | 1-64 chars  | DexScreener DEX identifier, normalized to lowercase   |
-| `pair_address`        | string  | required | 1-256 chars | Trading pair/pool address                             |
-| `quote_token_address` | string  | required | 1-256 chars | Quote asset/token address used by the chart route     |
-| `candles_amount`      | integer |    `329` | 1-10,000    | Maximum number of candles requested                   |
-| `charts_resolution`   | integer |      `5` | 1-1,440     | Candle interval in minutes                            |
-
-`candles_amount` is a maximum request amount. The service returns the candles that DexScreener provides and that the parser can successfully decode; `count` may therefore be smaller than the requested amount.
-
-### Optional top-level fields
-
-| Field             | Type         | Default | Description                                                      |
-|-------------------|--------------|---------|------------------------------------------------------------------|
-| `timeout_seconds` | integer/null | `null`  | Request-specific crawl timeout; accepted range is 10-600 seconds |
-| `proxy`           | object/null  | `null`  | Optional proxy mapping passed to the crawler's HTTP client       |
-
-Example proxy object:
-
-```json
-{
-  "proxy": {
-    "http": "http://user:password@proxy.example:8080",
-    "https": "http://user:password@proxy.example:8080"
-  }
-}
-```
-
-Only string-to-string key/value pairs are accepted for `proxy`.
-
-### cURL example
+Example:
 
 ```bash
 curl -X POST "http://localhost:9098/v1/charts" \
@@ -336,433 +343,145 @@ curl -X POST "http://localhost:9098/v1/charts" \
     "pair": {
       "chain_id": "solana",
       "dex_id": "raydium",
-      "pair_address": "<DEXSCREENER_PAIR_ADDRESS>",
-      "quote_token_address": "<QUOTE_TOKEN_MINT>",
+      "pair_address": "PAIR_ADDRESS",
+      "quote_token_address": "QUOTE_TOKEN_MINT",
       "candles_amount": 120,
       "charts_resolution": 5
     },
+    "crawler": "dexscreener",
     "timeout_seconds": 120
   }'
 ```
 
-### Python async example
-
-```python
-import httpx2
-
-
-async def fetch_chart() -> dict:
-    payload = {
-        "pair": {
-            "chain_id": "solana",
-            "dex_id": "raydium",
-            "pair_address": "<DEXSCREENER_PAIR_ADDRESS>",
-            "quote_token_address": "<QUOTE_TOKEN_MINT>",
-            "candles_amount": 120,
-            "charts_resolution": 5,
-        },
-        "timeout_seconds": 120,
-    }
-
-    async with httpx2.AsyncClient(timeout=130) as client:
-        response = await client.post(
-            "http://localhost:9098/v1/charts",
-            json=payload,
-        )
-        response.raise_for_status()
-        return response.json()
-```
-
-### Successful response
-
-The service returns a `ChartResponse` object:
+Successful responses contain:
 
 ```json
 {
   "pair": {
     "chain_id": "solana",
     "dex_id": "raydium",
-    "pair_address": "<DEXSCREENER_PAIR_ADDRESS>",
-    "quote_token_address": "<QUOTE_TOKEN_MINT>",
+    "pair_address": "PAIR_ADDRESS",
+    "quote_token_address": "QUOTE_TOKEN_MINT",
     "candles_amount": 120,
     "charts_resolution": 5
   },
-  "count": 3,
+  "crawler": "dexscreener",
+  "count": 120,
   "elapsed_ms": 847,
-  "charts": [
-    {
-      "timestamp": 1750000000000,
-      "datetime": "2025-06-15T10:13:20+00:00",
-      "open": 0.0000012,
-      "open_usd": 0.0000012,
-      "high": 0.0000014,
-      "high_usd": 0.0000014,
-      "low": 0.0000011,
-      "low_usd": 0.0000011,
-      "close": 0.0000013,
-      "close_usd": 0.0000013,
-      "volume_usd": 18452.73
-    }
-  ]
+  "charts": []
 }
 ```
 
-The values above are an illustrative response shape; the actual values depend on the pair and the time of the crawl.
+`count` is the number of successfully parsed candles, not necessarily the number requested.
 
-### Response fields
+## Choosing a crawler
 
-| Field        | Type    | Description                                |
-|--------------|---------|--------------------------------------------|
-| `pair`       | object  | Normalized request pair                    |
-| `count`      | integer | Number of parsed candles returned          |
-| `elapsed_ms` | integer | Server-side crawl duration in milliseconds |
-| `charts`     | array   | Parsed candle objects                      |
-
-### Candle schema
-
-Each item in `charts` contains:
-
-| Field        | Type    | Description                                       |
-|--------------|---------|---------------------------------------------------|
-| `timestamp`  | integer | Candle timestamp in milliseconds                  |
-| `datetime`   | string  | ISO-8601 UTC timestamp                            |
-| `open`       | float   | Opening token price in native/base representation |
-| `open_usd`   | float   | Opening price in USD                              |
-| `high`       | float   | Highest token price in native/base representation |
-| `high_usd`   | float   | Highest price in USD                              |
-| `low`        | float   | Lowest token price in native/base representation  |
-| `low_usd`    | float   | Lowest price in USD                               |
-| `close`      | float   | Closing token price in native/base representation |
-| `close_usd`  | float   | Closing price in USD                              |
-| `volume_usd` | float   | Candle trading volume in USD                      |
-
-The parser validates the basic OHLC relationships before yielding a candle:
-
-```text
-high >= max(open, close)
-high_usd >= max(open_usd, close_usd)
-low <= min(open, close)
-low_usd <= min(open_usd, close_usd)
-```
-
-Malformed binary records that fail parsing or OHLC validation are skipped rather than emitted as invalid candle objects.
-
-### HTTP status codes
-
-#### `200 OK`
-
-The crawl completed and a `ChartResponse` was generated. `count` can be `0` when no valid candles were produced.
-
-#### `422 Unprocessable Entity`
-
-Typical causes:
-
-- Invalid Pydantic field value.
-- Missing required fields.
-- Unsupported `chain_id` + `dex_id` route.
-- `timeout_seconds` outside the accepted request-model range.
-
-Example validation response:
+A request explicitly selects its provider:
 
 ```json
 {
-  "detail": "unsupported chart route: solana/unknown-dex"
+  "crawler": "dexscreener"
 }
 ```
 
-#### `504 Gateway Timeout`
-
-The crawl did not finish before the effective timeout:
+or:
 
 ```json
 {
-  "detail": "chart crawl operation timed out"
+  "crawler": "birdeye"
 }
 ```
 
-#### `500 Internal Server Error`
+This separation is intentional.
 
-An unexpected crawler or parsing failure escaped the explicitly handled error cases.
+DexScreener and Birdeye do not expose identical response formats, pair indexing, routing rules, or data semantics. The API allows the caller to choose the provider instead of hiding provider selection inside an opaque fallback system.
 
-### Extra fields are rejected
+This is particularly useful for a larger market-data pipeline where one upstream provider can be used as the primary source and another can be used for alternative coverage or comparison.
 
-The request model uses strict Pydantic configuration with `extra="forbid"`. For example, this is invalid:
+## Timeout handling
 
-```json
-{
-  "pair": {
-    "chain_id": "solana",
-    "dex_id": "raydium",
-    "pair_address": "<PAIR>",
-    "quote_token_address": "<QUOTE>",
-    "unexpected": true
-  }
-}
-```
+The service supports a request-specific timeout.
 
-Do not send undocumented fields.
+The timeout is applied to the complete crawl operation rather than only to the initial HTTP connection.
 
----
+The service creates a monotonic deadline and applies the remaining time to asynchronous crawler iteration. This prevents a generator that keeps producing slowly from running indefinitely.
 
-## 4. `WS /v1/ws/charts`
+The request model currently accepts timeout values between 10 and 600 seconds.
 
-Streams parsed candles over a WebSocket connection.
-
-Use this endpoint when the consumer wants to begin processing candles as they arrive instead of waiting for the complete chart crawl.
-
-### Connection
-
-```text
-ws://localhost:9098/v1/ws/charts
-```
-
-For TLS-enabled deployments:
-
-```text
-wss://your-host.example/v1/ws/charts
-```
-
-### Protocol
-
-1. Open the WebSocket connection.
-2. Send exactly one JSON request containing the same `ChartRequest` structure used by `POST /v1/charts`.
-3. Receive zero or more `item` messages.
-4. Receive one `done` message when the crawl finishes.
-5. The service closes the connection.
-
-### Request example
+Example:
 
 ```json
 {
-  "pair": {
-    "chain_id": "solana",
-    "dex_id": "raydium",
-    "pair_address": "<DEXSCREENER_PAIR_ADDRESS>",
-    "quote_token_address": "<QUOTE_TOKEN_MINT>",
-    "candles_amount": 120,
-    "charts_resolution": 5
-  },
   "timeout_seconds": 120
 }
 ```
 
-### JavaScript example
-
-```javascript
-const socket = new WebSocket("ws://localhost:9098/v1/ws/charts");
-
-socket.onopen = () => {
-  socket.send(JSON.stringify({
-    pair: {
-      chain_id: "solana",
-      dex_id: "raydium",
-      pair_address: "<DEXSCREENER_PAIR_ADDRESS>",
-      quote_token_address: "<QUOTE_TOKEN_MINT>",
-      candles_amount: 120,
-      charts_resolution: 5
-    },
-    timeout_seconds: 120
-  }));
-};
-
-socket.onmessage = (event) => {
-  const message = JSON.parse(event.data);
-
-  if (message.type === "item") {
-    const candle = message.data;
-    console.log("candle:", candle.datetime, candle.close_usd);
-    return;
-  }
-
-  if (message.type === "done") {
-    console.log("crawl complete:", message.count);
-    socket.close();
-    return;
-  }
-
-  if (message.type === "error") {
-    console.error("crawler error:", message.status_code, message.detail);
-  }
-};
-```
-
-### Python async example
-
-```python
-import asyncio
-import json
-import websockets
-
-
-async def stream_chart() -> None:
-    uri = "ws://localhost:9098/v1/ws/charts"
-
-    request = {
-        "pair": {
-            "chain_id": "solana",
-            "dex_id": "raydium",
-            "pair_address": "<DEXSCREENER_PAIR_ADDRESS>",
-            "quote_token_address": "<QUOTE_TOKEN_MINT>",
-            "candles_amount": 120,
-            "charts_resolution": 5,
-        },
-        "timeout_seconds": 120,
-    }
-
-    async with websockets.connect(uri) as websocket:
-        await websocket.send(json.dumps(request))
-
-        async for raw_message in websocket:
-            message = json.loads(raw_message)
-
-            if message["type"] == "item":
-                candle = message["data"]
-                print(candle["datetime"], candle["close_usd"])
-
-            elif message["type"] == "done":
-                print("completed:", message["count"])
-                break
-
-            elif message["type"] == "error":
-                raise RuntimeError(
-                    f"crawler error {message['status_code']}: {message['detail']}"
-                )
-
-
-asyncio.run(stream_chart())
-```
-
-### `item` message
-
-Every parsed candle is wrapped in an `item` envelope:
-
-```json
-{
-  "type": "item",
-  "data": {
-    "timestamp": 1750000000000,
-    "datetime": "2025-06-15T10:13:20+00:00",
-    "open": 0.0000012,
-    "open_usd": 0.0000012,
-    "high": 0.0000014,
-    "high_usd": 0.0000014,
-    "low": 0.0000011,
-    "low_usd": 0.0000011,
-    "close": 0.0000013,
-    "close_usd": 0.0000013,
-    "volume_usd": 18452.73
-  }
-}
-```
-
-### `done` message
-
-When the crawl finishes normally:
-
-```json
-{
-  "type": "done",
-  "count": 120
-}
-```
-
-`count` is the number of candles actually streamed. It is not guaranteed to equal the requested `candles_amount`.
-
-### `error` message
-
-WebSocket errors use a normalized envelope:
-
-```json
-{
-  "type": "error",
-  "status_code": 422,
-  "detail": "unsupported chart route: solana/unknown-dex"
-}
-```
-
-Possible status codes emitted by the WebSocket handler include:
-
-| `status_code` | Meaning                                    |
-|--------------:|--------------------------------------------|
-|         `422` | Invalid request or unsupported route       |
-|         `504` | WebSocket receive timeout or crawl timeout |
-|         `500` | Unexpected server-side error               |
-
-### WebSocket receive timeout
-
-After the socket is accepted, the service waits up to `WEBSOCKET_RECEIVE_TIMEOUT_SECONDS` for the initial JSON request.
-
-If the client connects but does not send a request in time, the server emits a `504` error message.
-
-### WebSocket execution timeout
-
-The total streaming operation is bounded by the smaller of:
+If the crawl exceeds its effective timeout, the REST endpoint returns:
 
 ```text
-request.timeout_seconds
-WEBSOCKET_IDLE_TIMEOUT_SECONDS
+504 Gateway Timeout
 ```
 
----
+## Concurrency control
 
-# Supported pair routing
+The API uses a global `asyncio.Semaphore` to prevent unbounded simultaneous chart crawls.
 
-The crawler does not dynamically accept every DexScreener chain/DEX combination. It validates the requested pair against a local route table before building the chart URL.
-
-Current supported combinations:
-
-```text
-solana + pumpswap
-solana + pumpfun
-solana + raydium
-solana + meteora
-base + uniswap
-robinhood + uniswap
-```
-
-This is deliberate: the binary DexScreener chart endpoint includes an internal route segment, and the service only knows how to construct routes that are explicitly present in its route table.
-
-When the pair is valid, the crawler constructs the chart request using values derived from the request, including:
-
-- chart resolution (`res`)
-- requested candle count (`cb`)
-- quote token (`q`)
-- chart mode parameters used internally by DexScreener
-
-The service requests an `application/octet-stream` response and parses the returned binary payload.
-
----
-
-# Concurrency model
-
-The service uses a global asyncio semaphore:
+The default configuration is:
 
 ```text
 MAX_CONCURRENT_CRAWLS=2
 ```
 
-with the default configuration.
-
-Every chart crawl must acquire one semaphore slot before the DexScreener request starts. This protects the service from unbounded concurrent outbound crawls.
-
-Example with `MAX_CONCURRENT_CRAWLS=2`:
+With two available crawler slots:
 
 ```text
-Request A -> slot 1 -> crawling
-Request B -> slot 2 -> crawling
-Request C -> waits
-Request D -> waits
+Request A → crawling
+Request B → crawling
+Request C → waiting
+Request D → waiting
 ```
 
-When A or B finishes, the next waiting request may acquire the released slot.
+When A or B finishes, another queued request can acquire the released slot.
 
-The `/ready` endpoint exposes the current `available_slots` count.
+This protects both the microservice and upstream providers from uncontrolled parallelism.
 
----
+Concurrency should be increased carefully because it affects outbound request pressure, latency, provider throttling, and service resource consumption.
 
-# Proxy support
+## Provider rate limits
 
-A request can optionally provide a proxy configuration:
+Provider rate limits are upstream concerns and should not be confused with this service's concurrency setting.
+
+For example:
+
+```text
+MAX_CONCURRENT_CRAWLS=10
+```
+
+does not mean the upstream provider permits 10 requests per second.
+
+The crawler implementation must respect the limits of the provider it is using.
+
+The current Birdeye implementation performs one OHLCV request per crawl and currently does not document a built-in global one-request-per-second scheduler. Deployments using a plan with strict request-per-second limits should account for this at the crawler/client layer before increasing concurrency.
+
+This distinction is important:
+
+```text
+Concurrency limit
+    =
+How many crawls may run at once
+
+Rate limit
+    =
+How frequently provider requests may be sent
+```
+
+They solve different problems.
+
+## Proxy support
+
+The request model supports an optional proxy mapping.
+
+Example:
 
 ```json
 {
@@ -773,132 +492,263 @@ A request can optionally provide a proxy configuration:
 }
 ```
 
-The service passes the proxy mapping to the underlying `cloudscraper` HTTP session.
+Proxy configuration is passed to the underlying crawler implementation.
 
-Proxy credentials should not be committed to source control. Prefer environment-level secret management or a protected deployment configuration.
+Proxy credentials should never be committed to the repository.
 
----
+## Error handling
 
-# Data semantics
+The API normalizes common crawler failures into HTTP status codes.
 
-## Timestamp
+| Status | Meaning                              |
+|-------:|--------------------------------------|
+|  `200` | Successful crawl                     |
+|  `422` | Invalid request or unsupported route |
+|  `504` | Crawl timeout                        |
+|  `500` | Unexpected crawler or server failure |
 
-`timestamp` is an integer Unix timestamp in milliseconds.
+Examples of `422` causes include:
 
-`datetime` is derived from the same timestamp and serialized as an ISO-8601 UTC string.
+* missing required fields
+* invalid field values
+* unsupported crawler identifier
+* unsupported DexScreener route
+* invalid timeout configuration
 
-Example:
+An upstream provider error is surfaced as a crawler exception and converted into a server error unless explicitly handled as a validation or timeout failure.
 
-```text
-timestamp: 1750000000000
-datetime: 2025-06-15T10:13:20+00:00
-```
+## REST response structure
 
-## Native price vs USD price
-
-Each OHLC value is represented twice:
-
-```text
-open / high / low / close
-```
-
-and:
+The response contains:
 
 ```text
-open_usd / high_usd / low_usd / close_usd
+pair
+crawler
+count
+elapsed_ms
+charts
 ```
 
-This gives consumers both the parsed chart value and its USD representation without requiring another transformation layer.
+### `pair`
 
-## Volume
+The normalized `Pair` used for the crawl.
 
-`volume_usd` is the candle's USD trading volume as reported in the chart payload.
+### `crawler`
 
----
+The provider selected for the operation.
 
-# Error handling and validation
+### `count`
 
-The service performs validation at several layers:
+The number of candles successfully normalized.
 
-### Request-model validation
+### `elapsed_ms`
 
-Pydantic validates:
+Server-side crawl duration.
 
-- required fields
-- string lengths
-- integer bounds
-- optional field types
-- forbidden extra fields
+### `charts`
 
-### Route validation
+The normalized candle collection.
 
-The pair validator verifies that `(chain_id, dex_id)` exists in the supported route table.
+## Example response
 
-### Runtime timeout enforcement
+```json
+{
+  "pair": {
+    "chain_id": "solana",
+    "dex_id": "raydium",
+    "pair_address": "PAIR_ADDRESS",
+    "quote_token_address": "QUOTE_TOKEN_MINT",
+    "candles_amount": 5,
+    "charts_resolution": 5
+  },
+  "crawler": "birdeye",
+  "count": 5,
+  "elapsed_ms": 921,
+  "charts": [
+    {
+      "timestamp": 1750000000000,
+      "datetime": "2025-06-15T10:13:20+00:00",
+      "ohlc_valid": true,
+      "direction": "bullish",
+      "open": 0.0000012,
+      "high": 0.0000014,
+      "low": 0.0000011,
+      "close": 0.0000013,
+      "volume_usd": 18452.73
+    }
+  ]
+}
+```
 
-A monotonic deadline is created for each crawl. The remaining time is applied to each async generator step, so a slow crawl cannot continue indefinitely.
+The exact candle fields depend on the selected crawler implementation.
 
-### Binary payload validation
+## Architecture
 
-The chart parser checks the binary payload for expected candle markers, decodes all required numeric values, and validates OHLC relationships before yielding a candle.
+The source tree is organized around provider implementations, domain models, parsing utilities, and the API layer.
 
----
+```text
+MemecoinsChartsCrawler/
+├── .env/
+│   ├── .env.example
+│   └── .env.prod
+├── src/
+│   ├── crawler/
+│   │   ├── __init__.py
+│   │   ├── _dexscreener_charts_parser.py
+│   │   ├── birdeye.py
+│   │   └── dexscreener.py
+│   ├── items/
+│   │   ├── __init__.py
+│   │   ├── candle.py
+│   │   ├── pair.py
+│   │   └── schemas.py
+│   ├── util/
+│   │   └── utils.py
+│   ├── __init__.py
+│   ├── __main__.py
+│   ├── api.py
+│   └── main.py
+├── tests/
+│   └── test_service.py
+├── .dockerignore
+├── .gitignore
+├── CHANGELOG.md
+├── Dockerfile
+├── LICENSE
+├── README.md
+├── docker-compose.yml
+├── pyproject.toml
+└── uv.lock
+```
 
-# Testing
+The repository intentionally keeps provider-specific implementations separate while sharing the domain models where appropriate.
 
-Run the test suite with:
+## Running locally
+
+### Requirements
+
+The project currently targets:
+
+```text
+Python >= 3.12
+Python < 3.13
+uv
+```
+
+The dependency set includes FastAPI, Uvicorn, Pydantic, Pydantic Settings, HTTPX2, and Cloudsraper for the DexScreener crawler. Development dependencies include pytest and pytest-asyncio.
+
+### Clone
 
 ```bash
-uv run pytest
+git clone REPOSITORY
+cd MemecoinsChartsCrawler
 ```
 
-The project configures pytest with:
-
-```toml
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-pythonpath = ["src"]
-```
-
-The repository's tests cover route/parser behavior under the current project structure. Keep API tests close to the same conventions when adding endpoint-level coverage.
-
-For a real integration test against DexScreener, use a known-good pair and run it separately from deterministic parser/unit tests so external availability does not make the unit suite flaky.
-
----
-
-# Docker
-
-The repository includes a Dockerfile and Docker Compose configuration.
-
-Build the image:
+### Install
 
 ```bash
-docker build -t dexscreener-crawler:latest .
+uv sync --locked
 ```
 
-Run the container:
+### Configure environment
+
+Create the production-style environment file from the example:
+
+```text
+.env/.env.example
+```
+
+The Birdeye crawler expects:
+
+```env
+BIRDEYE_API_KEY=your-api-key
+```
+
+The service-level configuration contains values such as:
+
+```env
+HOST=0.0.0.0
+PORT=9098
+MAX_CONCURRENT_CRAWLS=2
+DEFAULT_TIMEOUT_SECONDS=120
+MAX_TIMEOUT_SECONDS=600
+```
+
+Never commit a populated secrets file.
+
+### Start the API
+
+```bash
+uv run uvicorn src.api:app --host 0.0.0.0 --port 9098
+```
+
+The service is then available at:
+
+```text
+http://127.0.0.1:9098
+```
+
+FastAPI documentation is available at:
+
+```text
+http://127.0.0.1:9098/docs
+http://127.0.0.1:9098/redoc
+```
+
+## Running with Docker
+
+The project includes a Dockerfile based on:
+
+```text
+python:3.12-slim-bookworm
+```
+
+The current image installs only the minimal operating-system packages required by the service, including `ca-certificates`, `curl`, and `tini`.
+
+Chromium and Chromium Driver are no longer installed because the project no longer requires Selenium/Chrome for chart retrieval. The September 9, 2026 Docker change removed the browser binaries, browser environment variables, and browser-specific system libraries from the image.
+
+### Build
+
+```bash
+docker build -t memecoins-charts-crawler:latest .
+```
+
+### Run
 
 ```bash
 docker run --rm \
   -p 9098:9098 \
-  -e HOST=0.0.0.0 \
-  -e PORT=9098 \
-  dexscreener-crawler:latest
+  --env-file .env/.env.prod \
+  memecoins-charts-crawler:latest
 ```
 
-The image exposes port `9098` and starts Uvicorn through `tini`.
+The container launches Uvicorn through `tini`.
 
 ## Docker Compose
 
-The included `docker-compose.yml` reads production configuration from:
+The repository includes a single-service Compose deployment.
+
+The service uses:
 
 ```text
-./.env/.env.prod
+.env/.env.prod
 ```
 
-and publishes the configured `${PORT}`.
+and is attached to the external Docker network:
 
-Start it with:
+```text
+crawlers-network
+```
+
+The network must already exist.
+
+Create it once:
+
+```bash
+docker network create crawlers-network
+```
+
+Then start the service:
 
 ```bash
 docker compose up -d --build
@@ -910,157 +760,478 @@ Inspect logs:
 docker compose logs -f app
 ```
 
-Check the service:
+Check health:
 
 ```bash
 curl http://localhost:9098/health
+```
+
+Check readiness:
+
+```bash
 curl http://localhost:9098/ready
 ```
 
-The Compose configuration also attaches the service to an external Docker network named `crawlers-network` and mounts a `dexscreener_logs` volume at `/app/logs`.
+The current Compose setup also supports configurable ports and environment variables through `.env/.env.prod`.
 
-Make sure the external network exists before starting Compose:
+## Testing
+
+Run the test suite with:
 
 ```bash
-docker network create crawlers-network
+uv run pytest
 ```
 
-If it already exists, the command returns an error; that is harmless.
+The project configures pytest for automatic asynchronous test handling:
 
----
+```toml
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+```
 
-# Operational recommendations
+The service test suite covers request validation, crawler interaction, parser behavior, REST handling, and WebSocket behavior in the current repository.
 
-## Use `/health` for liveness
+## Testing philosophy
 
-A process that responds to `/health` is alive. It does not mean DexScreener is reachable.
+The crawler is an external-data integration service, so tests fall into two broad categories.
 
-## Use `/ready` for readiness
+### Deterministic tests
 
-Use `/ready` to inspect the current crawl capacity and configured timeout limits before routing workload to the service.
+These should test:
 
-## Prefer `POST /v1/charts` for batch pipelines
+* request validation
+* Pair validation
+* route selection
+* parser behavior
+* candle normalization
+* malformed record handling
+* timeout behavior
+* API error handling
+* crawler selection
+* response schema
 
-Use the REST endpoint when the downstream job needs the complete result as one object, for example:
+These tests should not depend on live provider availability.
 
-- historical backtesting
-- ETL ingestion
-- storing candle arrays in a database/object store
-- one-shot analysis
+### Integration tests
 
-## Prefer WebSocket for incremental consumers
+These test:
 
-Use `WS /v1/ws/charts` when downstream processing can start before the entire chart has been received.
+* actual provider connectivity
+* authentication
+* provider-side pair availability
+* real chart responses
+* live candle normalization
 
-## Keep timeouts realistic
+Integration tests should be treated separately from deterministic unit/API tests because provider availability, data coverage, throttling, and external behavior can change independently of the code.
 
-Increasing the timeout does not create more DexScreener data. It only gives a slow crawl more time to finish.
+## Data quality
 
-## Avoid uncontrolled parallelism
-
-The service intentionally limits concurrent crawls. Increasing `MAX_CONCURRENT_CRAWLS` should be done together with monitoring of outbound traffic, latency, error rates, and the behavior of the upstream chart endpoint.
-
----
-
-# Example integration flow for a backtesting system
-
-A typical consumer can use the service like this:
+The crawler intentionally distinguishes between:
 
 ```text
-1. Identify a DEX pair.
-2. Determine the chain_id + dex_id.
-3. Determine the quote token address.
-4. Request candles at the required resolution.
-5. Receive normalized OHLCV candles.
-6. Convert `datetime` to the backtest timezone if needed.
-7. Build indicators/signals from the candle series.
-8. Persist the raw candle response if reproducibility is important.
+Parsing validity
+and
+Market-data semantic validity
 ```
 
-For example, a 5-minute request for 329 candles covers approximately:
+A record can be successfully decoded while still having an OHLC relationship that deserves inspection.
+
+That is why the normalized candle contains:
 
 ```text
-329 × 5 minutes = 1,645 minutes
-≈ 27.4 hours
+ohlc_valid
 ```
 
-This is approximate chart coverage; the actual returned history depends on the upstream data available for the pair.
+instead of automatically discarding every semantically unusual candle.
 
----
+This is particularly important for memecoin analysis because extreme candles are not necessarily noise. A large candle may represent exactly the event a downstream risk engine is trying to identify.
 
-# API documentation
-
-Because this service is built with FastAPI, interactive documentation is generated automatically.
-
-When running locally:
-
-- Swagger UI: `http://localhost:9098/docs`
-- ReDoc: `http://localhost:9098/redoc`
-
-These are the fastest way to inspect the generated OpenAPI schema while developing a client.
-
----
-
-# Project structure
-
-The core source tree is organized around the API, crawler, models, and utilities:
+For example:
 
 ```text
-src/
-├── api.py
-├── main.py
-├── __main__.py
-├── crawler/
-│   ├── dexscreener.py
-│   └── chart_parser.py
-├── items/
-│   ├── candle.py
-│   ├── pair.py
-│   └── schemas.py
-└── util/
-    └── utils.py
+steady bullish staircase
+        ↓
+large pump
+        ↓
+single catastrophic red candle
 ```
 
-Important responsibilities:
+An aggressive parser that removes the abnormal candle may destroy the evidence required for downstream pattern recognition.
 
-- `src/api.py` — FastAPI application, endpoint handlers, timeout handling, concurrency gate, and WebSocket protocol.
-- `src/crawler/dexscreener.py` — DexScreener URL generation, HTTP request, and async candle generation.
-- `src/crawler/chart_parser.py` — binary response decoding and OHLC validation.
-- `src/items/pair.py` — request pair validation and supported route checking.
-- `src/items/candle.py` — normalized candle model.
-- `src/items/schemas.py` — `ChartRequest` and `ChartResponse` schemas.
-- `src/util/utils.py` — supported chain/DEX route map.
+## Usage in a pattern-recognition system
 
----
+A typical consumer can request candles and feed them directly into an analytical pipeline.
 
-# Important limitations
+```text
+Memecoin discovery
+        ↓
+Pair resolution
+        ↓
+Memecoins Charts Crawler
+        ↓
+Normalized candles
+        ↓
+Pattern Recognition
+        ↓
+Risk Assessment
+        ↓
+Trade / Watch / Reject
+```
 
-### This is not the public DexScreener JSON API
+The normalized candle structure is intended to make the chart service interchangeable with the downstream analytics layer.
 
-The crawler requests DexScreener's binary chart endpoint and parses the binary response. It therefore depends on the current response format and internal route structure used by the chart service.
+The pattern-recognition system can work from:
 
-### Route support is explicit
+```text
+timestamp
+datetime
+ohlc_valid
+direction
+open
+high
+low
+close
+volume_usd
+```
 
-A newly added DexScreener chain or DEX is not automatically supported. It must be added to the service's route mapping with the correct internal chart route.
+without knowing whether the original record came from DexScreener or Birdeye.
 
-### Upstream availability affects results
+## Using the crawler as a library
 
-A successful request to this microservice depends on the upstream DexScreener chart endpoint being reachable and returning a payload that the parser recognizes.
+The provider crawlers can also be used directly without the FastAPI layer.
 
-### A successful HTTP response does not guarantee a full candle set
+Example:
 
-The `count` field is the number of candles actually parsed and returned. It can be smaller than `candles_amount`.
+```python
+import asyncio
 
----
+from src.crawler.birdeye import BirdeyeCrawler
+from src.items.pair import Pair
 
-# License
 
-This project is licensed under the MIT License.
+async def main():
+    pair = Pair(
+        chain_id="solana",
+        dex_id="raydium",
+        pair_address="PAIR_ADDRESS",
+        quote_token_address="QUOTE_TOKEN_ADDRESS",
+        candles_amount=100,
+        charts_resolution=5,
+    )
 
-See [`LICENSE`](./LICENSE) for the full license text.
+    crawler = BirdeyeCrawler()
 
----
+    try:
+        async for candle in crawler.crawl_charts(pair):
+            print(candle)
+    finally:
+        await crawler.close()
 
-# Repository
 
-#### [GitHub](https://github.com/G-Glitch404/DexScreenerChartsCrawler)
+asyncio.run(main())
+```
+
+The same general interface is used by the DexScreener crawler:
+
+```python
+async for candle in crawler.crawl_charts(pair):
+    ...
+```
+
+This is one of the core design goals of the project.
+
+## Provider independence
+
+The project does not attempt to pretend that all providers are identical.
+
+Instead, it separates:
+
+```text
+Shared request model
+        +
+Provider-specific candle model
+        +
+Provider-specific crawler
+```
+
+This is preferable to forcing incompatible provider responses into an artificial universal schema.
+
+For example:
+
+```text
+DexScreener
+    → DexscreenerCandle
+    → native price + USD OHLC + USD volume
+
+Birdeye
+    → BirdeyeCandle
+    → normalized OHLC + USD volume
+```
+
+The API response identifies the selected crawler so consumers know which provider produced the returned dataset.
+
+## Operational recommendations
+
+### Use `/health` for liveness
+
+A successful `/health` request confirms that the application process is responding.
+
+It does not prove that DexScreener or Birdeye is reachable.
+
+### Use `/ready` for capacity visibility
+
+`/ready` exposes the current crawler semaphore capacity and service timeout configuration.
+
+This can be useful for container orchestration and operational diagnostics.
+
+### Keep provider concurrency controlled
+
+Increasing:
+
+```env
+MAX_CONCURRENT_CRAWLS
+```
+
+can increase upstream pressure even when your application itself has enough CPU and memory.
+
+Provider request-per-second limits should be evaluated separately.
+
+### Preserve raw data for difficult cases
+
+For backtesting and chart-pattern research, preserving the original normalized candle sequence is valuable.
+
+This makes it possible to:
+
+* reproduce a detected pattern
+* compare provider outputs
+* debug parsing anomalies
+* improve pattern-recognition algorithms
+* build labeled training datasets
+* investigate false positives and false negatives
+
+## Known limitations
+
+### DexScreener routing is explicit
+
+The DexScreener crawler currently depends on a local route table instead of dynamically accepting every chain/DEX combination. New chain or DEX combinations therefore require route support to be added.
+
+### Birdeye pair coverage is provider-dependent
+
+A pair visible in DexScreener is not automatically guaranteed to be queryable through Birdeye's pair OHLCV endpoint.
+
+Applications that use both providers should treat provider availability as independent.
+
+### Provider schemas are not identical
+
+`DexscreenerCandle` and `BirdeyeCandle` intentionally expose slightly different normalized fields.
+
+Consumers that need a fully provider-neutral schema may add their own application-level normalization layer.
+
+### Rate limits remain provider constraints
+
+The service's concurrency semaphore should not be interpreted as an upstream quota manager.
+
+Provider-specific request limits must be respected independently.
+
+### No guarantee of complete historical coverage
+
+A request for N candles represents a maximum requested amount.
+
+The provider may return fewer candles due to:
+
+* pair age
+* provider indexing
+* missing historical data
+* provider-side limitations
+* malformed or rejected records
+
+Therefore:
+
+```text
+requested candles != guaranteed returned candles
+```
+
+## Security considerations
+
+### API keys
+
+Birdeye API keys must be supplied through environment configuration.
+
+Do not:
+
+* commit secrets
+* hardcode API keys
+* print API keys
+* include provider credentials in test fixtures
+* include populated production `.env` files in source control
+
+### Proxies
+
+Proxy credentials should be treated as secrets.
+
+Do not embed production proxy credentials in request examples or repository files.
+
+### External input
+
+All public request models use strict Pydantic validation.
+
+Unexpected fields are rejected rather than silently accepted.
+
+## Development
+
+The project uses `uv` for dependency resolution and lockfile-based reproducibility.
+
+Install the locked environment:
+
+```bash
+uv sync --locked
+```
+
+Run tests:
+
+```bash
+uv run pytest
+```
+
+Run the API:
+
+```bash
+uv run uvicorn src.api:app --host 0.0.0.0 --port 9098
+```
+
+The repository also contains Ruff configuration with a 100-character line length and basic error/import linting.
+
+## Dependency management
+
+The current project declares:
+
+```text
+httpx2
+cloudscraper
+fastapi
+pydantic
+pydantic-settings
+uvicorn[standard]
+```
+
+Development dependencies include:
+
+```text
+pytest
+pytest-asyncio
+```
+
+Python is constrained to:
+
+```text
+>=3.12,<3.13
+```
+
+The project keeps `uv.lock` committed so deployments can reproduce the locked environment.
+
+## Project status
+
+The repository is an actively evolving internal microservice rather than a frozen release.
+
+Recent work has focused on:
+
+* provider abstraction
+* Birdeye integration
+* normalized provider-specific candle models
+* semantic candle metadata
+* parser refactoring
+* test refactoring
+* Docker simplification
+* removal of browser dependencies
+* production-oriented container deployment
+
+The current repository contains 32 commits on `master`.
+
+## Roadmap
+
+The architecture leaves room for several extensions.
+
+### Additional data providers
+
+The provider boundary makes it possible to add additional chart sources without changing the external API contract significantly.
+
+### Provider fallback
+
+A future version could support controlled fallback behavior such as:
+
+```text
+Primary provider
+      ↓
+provider unavailable?
+      ↓
+Secondary provider
+      ↓
+normalized candles
+```
+
+Such a feature should be explicit because provider datasets are not guaranteed to be equivalent.
+
+### Stronger provider-aware rate limiting
+
+Provider-specific rate limiters can be added at the crawler layer so that application-level concurrency and upstream request-per-second limits remain separate.
+
+### Better data provenance
+
+Future versions could attach provider metadata such as:
+
+```text
+provider
+provider_pair
+provider_timestamp
+request_time
+```
+
+to improve downstream reproducibility.
+
+### Unified candle protocol
+
+A future shared protocol could formalize the minimum candle interface across providers without forcing all providers to expose identical additional fields.
+
+## License
+
+This project is released under the MIT License.
+
+See `LICENSE` for the complete license text.
+
+## Contributing
+
+Contributions should preserve the separation between:
+
+```text
+API
+ ↓
+request model
+ ↓
+crawler
+ ↓
+provider parser
+ ↓
+normalized domain object
+```
+
+When adding a provider:
+
+1. Add a provider-specific crawler implementation
+2. Add a provider-specific candle model when the provider schema differs
+3. Add provider-specific normalization and validation
+4. Update the API crawler selector
+5. Add deterministic tests
+6. Add integration tests where practical
+7. Update the README
+8. Update the changelog
+
+Avoid moving provider-specific behavior into the API layer.
+
+## Changelog
+
+See `CHANGELOG.md` for the project history.
+
+## Repository
+
+The project is maintained in the `MemecoinsChartsCrawler` repository under the `G-Glitch404` GitHub organization.
