@@ -1,16 +1,16 @@
-from typing import Optional, Literal
+from typing import Optional, Union, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.items.candle import DexscreenerCandle
-from src.items.pair import Pair
+from src.items.pair import Pair, BirdeyePair
 
 
 class ChartRequest(BaseModel):
     """ Validate a chart crawling request """
     model_config = ConfigDict(extra="forbid")
 
-    pair: Pair
+    pair: Union[Pair, BirdeyePair]
     crawler: Literal["dexscreener", "birdeye"]
     timeout_seconds: Optional[int] = Field(default=None, ge=10, le=600)
     proxy: Optional[dict[str, str]] = None

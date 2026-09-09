@@ -6,3 +6,17 @@ ROUTES: dict[tuple, str] = {
     ("base", "uniswap"): "uniswapv4",
     ("robinhood", "uniswap"): "uniswapv4",
 }
+
+
+BIRDEYE_ROUTES = frozenset({
+    "solana",
+    "base",
+    "bsc",
+    "ethereum",
+    "monad",
+    "fogo",
+    "mantle",
+    "hyperevm",
+    "megaeth",
+    "robinhood",
+})

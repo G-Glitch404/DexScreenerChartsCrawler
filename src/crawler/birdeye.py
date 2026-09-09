@@ -5,7 +5,7 @@ from typing import AsyncGenerator, Optional
 import httpx2
 
 from src.items.candle import BirdeyeCandle
-from src.items.pair import Pair
+from src.items.pair import BirdeyePair
 
 
 class BirdeyeCrawler:
@@ -68,7 +68,7 @@ class BirdeyeCrawler:
             volume_usd=volume_usd,
         )
 
-    async def crawl_charts(self, pair: Pair) -> AsyncGenerator[BirdeyeCandle, None]:
+    async def crawl_charts(self, pair: BirdeyePair) -> AsyncGenerator[BirdeyeCandle, None]:
         """ Retrieve and yield Birdeye candles for a pair """
         amount = min(max(int(pair.candles_amount), 0), self.MAX_CANDLES)
         if not amount: return
@@ -129,11 +129,9 @@ if __name__ == "__main__":
         """ Run a local Birdeye crawler test """
         crawler = BirdeyeCrawler()
 
-        test_pair = Pair(
+        test_pair = BirdeyePair(
             chain_id="robinhood",
-            dex_id="uniswap",
             pair_address="0x4be9657ec9002e528f4f17a5c43edc525a07f888f7b180c2afbf75e096c4f38a",
-            quote_token_address="0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
             candles_amount=100,
             charts_resolution=5,
         )
