@@ -1,14 +1,20 @@
 import os
-import datetime as dt
-from typing import AsyncGenerator, Optional
-
+import asyncio
+import time
 import httpx2
+
+import datetime as dt
+
+from typing import AsyncGenerator, Optional
 
 from src.items.candle import BirdeyeCandle
 from src.items.pair import BirdeyePair
 
 
 class BirdeyeCrawler:
+    _rate_lock = asyncio.Lock()
+    _last_request = 0.0
+
     BASE_URL: str = "https://public-api.birdeye.so"
     INTERVALS: dict[int, str] = {1: "1m", 3: "3m", 5: "5m", 15: "15m", 30: "30m", 60: "1H", 120: "2H", 240: "4H", 360: "6H", 480: "8H", 720: "12H", 1440: "1D", 4320: "3D", 10080: "1W", 43200: "1M"}
     MAX_CANDLES: int = 5000
@@ -20,6 +26,16 @@ class BirdeyeCrawler:
             raise ValueError("BIRDEYE_API_KEY is required")
 
         self.client = httpx2.AsyncClient(base_url=self.BASE_URL, timeout=timeout, proxy=proxy)
+
+    async def _wait_rate_limit(self, time_to_wait: float = 1.5) -> None:
+        """Wait until the next Birdeye request is allowed"""
+        async with self._rate_lock:
+            elapsed = time.monotonic() - self._last_request
+
+            if elapsed < time_to_wait:
+                await asyncio.sleep(time_to_wait - elapsed)
+
+            self._last_request = time.monotonic()
 
     def _interval(self, resolution: int) -> str:
         """ Convert chart resolution to a Birdeye interval """
@@ -73,6 +89,7 @@ class BirdeyeCrawler:
         amount = min(max(int(pair.candles_amount), 0), self.MAX_CANDLES)
         if not amount: return
 
+        await self._wait_rate_limit()
         response = await self.client.get(
             "/defi/v3/ohlcv/pair",
             params={
