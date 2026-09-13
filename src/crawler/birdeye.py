@@ -107,6 +107,8 @@ class BirdeyeCrawler:
             },
         )
 
+        print(response)
+
         if response.is_error:
             try: detail = response.json()
             except ValueError: detail = response.text
